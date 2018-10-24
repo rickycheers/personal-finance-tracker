@@ -133,7 +133,7 @@ class MailImporter
             'labelIds' => [
                 "INBOX", // not archived
                 "UNREAD", // unread messages
-                config('transaction_notifications_label'),
+                config('pft.transaction_notifications_label'),
             ]
         ]);
     }

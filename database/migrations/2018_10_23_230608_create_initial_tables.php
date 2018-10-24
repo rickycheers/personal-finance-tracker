@@ -55,8 +55,6 @@ class CreateInitialTables extends Migration
             $table->foreign('transaction_id')->references('id')->on('transactions');
             $table->foreign('account_id')->references('id')->on('accounts');
         });
-
-
     }
 
     /**

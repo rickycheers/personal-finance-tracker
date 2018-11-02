@@ -5,11 +5,9 @@ namespace App\Console\Commands;
 use App\Models\Payload;
 use App\Models\Split;
 use App\Models\Transaction;
-use Carbon\Carbon;
+use App\PFT\EmailExtractor\EmailExtractor;
 use DB;
 use Illuminate\Console\Command;
-use Money\Parser\IntlMoneyParser;
-use Symfony\Component\DomCrawler\Crawler;
 
 class ImportTransactionsFromEmails extends Command
 {
@@ -44,55 +42,41 @@ class ImportTransactionsFromEmails extends Command
      */
     public function handle()
     {
-        $subject = "Credit One Balance and Available Credit";
+        $notifications = collect(config('pft.notifications'));
 
-        $payloads = Payload::where('type', 'client_email_notification')
-            ->where('data->subject', $subject)
-            ->get();
-
-        $this->info("Processing subject: $subject");
-
-        $transactions = $payloads->each(function ($payload) {
-            $this->importEmail($payload);
+        $notifications->each(function ($notification) {
+            $this->process($notification);
         });
-
-        $this->info(sprintf("Imported %d transactions", count($transactions)));
     }
 
-    protected function importEmail($payload)
+    protected function process($notification)
     {
-        $email = collect(json_decode($payload->data, true));
-        $html = base64UrlDecode($email->get('html'));
-        $crawler = new Crawler($html);
+        $payloads = Payload::where('type', 'client_email_notification')
+            ->where('data->subject', $notification['emailSubject'])
+            ->get();
 
-        $rows = $crawler->filter('tr')->reduce(function (Crawler $node, $i) {
-            return $node->children()->count() === 4;
-        });
+        $this->info("Processing: {$notification['bank']} - {$notification['emailSubject']}");
 
-        /** @var IntlMoneyParser $moneyParser */
-        $moneyParser = app()->get('money.parser');
+        $total = 0;
 
-        $transactions = $rows->siblings()->each(function (Crawler $row) use ($moneyParser) {
-            $tds = $row->children();
-            $amount = $tds->eq(3)->text();
-            if (str_contains($amount, '-')) {
-                $amount = str_replace('-', '', $amount);
-                $money = $moneyParser->parse($amount)->negative();
-            } else {
-                $money = $moneyParser->parse($amount);
-            }
+        foreach ($payloads as $payload) {
+            $email = collect(json_decode($payload->data, true));
+            $html = base64UrlDecode($email->get('html'));
+            $extractor = EmailExtractor::create($notification['name'], $html);
+            $transactions = $extractor->extractTransactions();
+            $accountNumber = $extractor->extractAccountNumber();
+            $this->importTransactions($transactions, $accountNumber);
+            $total += count($transactions);
+        }
 
-            $transaction = $this->store([
-                'transactionDate' => Carbon::make($tds->eq(0)->text()),
-                'reconciliationDate' => Carbon::make($tds->eq(1)->text()),
-                'description' => cleanSpace($tds->eq(2)->text()),
-                'amount' => $money,
-            ]);
+        $this->info(sprintf("Imported %d transactions", $total));
+    }
 
-            return $transaction;
-        });
-
-        return $transactions;
+    protected function importTransactions(array $transactions, $accountNumber)
+    {
+        foreach ($transactions as $transaction) {
+//            $this->store($transaction);
+        }
     }
 
     protected function store($data)
